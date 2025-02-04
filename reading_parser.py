@@ -84,14 +84,14 @@ client.loop_start()
 
 try:
     while True:
-        # Get the current time as a string
-        current_time = str(2)
+        # # Get the current time as a string
+        # current_time = str(2)
 
-        # Publish the current time to the topic
-        client.publish(publish_topic, current_time)
-        print(f'Sent time: {current_time} to topic "{publish_topic}"')
+        # # Publish the current time to the topic
+        # client.publish(publish_topic, current_time)
+        # print(f'Sent time: {current_time} to topic "{publish_topic}"')
 
-        # Wait for a 5-second interval before sending the next time
+        # # Wait for a 5-second interval before sending the next time
         time.sleep(500000)
 
 except KeyboardInterrupt:
