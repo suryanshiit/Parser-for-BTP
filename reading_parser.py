@@ -41,7 +41,7 @@ def on_message(client, userdata, message):
         solar = 0.0
 
         # Extract the numeric part of node_id (formatted as "N<id>")
-        node_id = int(readings[2][1:])  # Skip the "N" and convert the remaining part to int
+        node_id = readings[2][1:]  # Skip the "N" and convert the remaining part to int
 
         # Print or process the extracted values
         print(f"Battery Voltage: {battery_voltage}, Pressure: {pressure}, Solar: {solar}, Node ID: {node_id}")
