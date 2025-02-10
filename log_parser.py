@@ -32,7 +32,7 @@ def on_message(client, userdata, message):
 
     if len(readings) == 2:
         # Extract node_id and message
-        node_id = int(readings[0][1:])  # Skip "N" and convert the numeric part to int
+        node_id = readings[0][1:]  # Skip "N" and convert the numeric part to int
         message = readings[1]  # Extract the message part
 
         # Print or process the extracted values
