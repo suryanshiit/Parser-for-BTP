@@ -3,9 +3,25 @@ import time
 from pymongo import MongoClient
 from datetime import datetime
 
+# MongoDB connection settings
 mongo_uri = 'mongodb://admin:mybtp@3.109.19.112:27017/'
-client = MongoClient(mongo_uri)
-db = client['sensor_data']  # Database name
+
+def connect_mongo():
+    """Function to establish a MongoDB connection with retry logic."""
+    while True:
+        try:
+            client = MongoClient(mongo_uri, serverSelectionTimeoutMS=5000)
+            # Attempt to communicate with the server
+            client.admin.command('ping')
+            print("Connected to MongoDB")
+            return client
+        except Exception as e:
+            print(f"MongoDB connection failed: {e}. Retrying in 5 seconds...")
+            time.sleep(5)
+
+# Initialize MongoDB client with retry logic
+mongo_client = connect_mongo()
+db = mongo_client['sensor_data']  # Database name
 collection = db['logs']  # Collection name
 
 # MQTT broker details
@@ -16,78 +32,69 @@ publish_topic = 'device/time_update'  # Topic to publish the time
 
 # Callback when the client connects to the broker
 def on_connect(client, userdata, flags, rc):
-    print('Connected to MQTT broker!')
-    client.subscribe(subscribe_topic)
-    print(f'Subscribed to topic "{subscribe_topic}"')
+    if rc == 0:
+        print('Connected to MQTT broker!')
+        client.subscribe(subscribe_topic)
+        print(f'Subscribed to topic "{subscribe_topic}"')
+    else:
+        print(f"Failed to connect to MQTT broker, return code {rc}")
 
 # Callback when a message is received on a subscribed topic
-from datetime import datetime
-
 def on_message(client, userdata, message):
+    global mongo_client, collection
     print(f'Received message on topic "{message.topic}": "{message.payload.decode()}"')
     payload = message.payload.decode()
     
-    # Split the payload by ":"
     readings = payload.split(": ")
-
+    
     if len(readings) == 2:
-        # Extract node_id and message
-        node_id = readings[0][1:]  # Skip "N" and convert the numeric part to int
-        message = readings[1]  # Extract the message part
-
-        # Print or process the extracted values
-        print(f"Node ID: {node_id}, Message: '{message}'")
+        node_id = readings[0][1:]
+        message_content = readings[1]
+        print(f"Node ID: {node_id}, Message: '{message_content}'")
     else:
         print("Invalid payload format!")
+        return
 
     timestamp = datetime.now()
-    # Create a document to insert into MongoDB
     document = {
         "node_id": node_id,
-        "message": message,
+        "message": message_content,
         "timestamp": timestamp
     }
-
-    # Print the document (or insert it into MongoDB)
-    print("Document to insert:", document)
-
-
-    # Insert the document into MongoDB
-    collection.insert_one(document)
-    print(f'Inserted document: {document}')
-
+    
+    try:
+        collection.insert_one(document)
+        print(f'Inserted document: {document}')
+    except Exception as e:
+        print(f"MongoDB insertion error: {e}. Reconnecting...")
+        mongo_client = connect_mongo()
+        db = mongo_client['sensor_data']
+        collection = db['logs']
+        collection.insert_one(document)
+        print("Reconnected and inserted document.")
 
 # Callback when the client encounters an error
 def on_log(client, userdata, level, buf):
     print(f'MQTT Client Log: {buf}')
 
 # Create an MQTT client instance
-client = mqtt.Client()
+mqtt_client = mqtt.Client()
 
 # Set the callbacks
-client.on_connect = on_connect
-client.on_message = on_message
-client.on_log = on_log
+mqtt_client.on_connect = on_connect
+mqtt_client.on_message = on_message
+mqtt_client.on_log = on_log
 
 # Connect to the MQTT broker
-client.connect(broker_ip, port, 60)
+mqtt_client.connect(broker_ip, port, 60)
 
 # Start the network loop in a separate thread
-client.loop_start()
+mqtt_client.loop_start()
 
 try:
     while True:
-        # # Get the current time as a string
-        # current_time = str(2)
-
-        # # Publish the current time to the topic
-        # client.publish(publish_topic, current_time)
-        # print(f'Sent time: {current_time} to topic "{publish_topic}"')
-
-        # # Wait for a 5-second interval before sending the next time
         time.sleep(500000)
-
 except KeyboardInterrupt:
     print('Disconnected from MQTT broker')
-    client.loop_stop()
-    client.disconnect()
+    mqtt_client.loop_stop()
+    mqtt_client.disconnect()
