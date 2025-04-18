@@ -1,102 +1,101 @@
 import paho.mqtt.client as mqtt
 import time
-from pymongo import MongoClient
+from influxdb_client import InfluxDBClient, Point
+from influxdb_client.client.write_api import SYNCHRONOUS
 from datetime import datetime
 
-# MongoDB connection settings
-mongo_uri = 'mongodb://admin:mybtp@3.109.19.112:27017/'
+# InfluxDB 2.x configuration
+influx_url = "https://us-east-1-1.aws.cloud2.influxdata.com"
+influx_token = "psFxR835CKkYwdTMJYcmT4pVpY4jcpfkfQSe8eRfO382LW-WYboRy3crsCSiHjYF7GYJgi5ScHyYm-q1e0EISQ=="
+influx_org = "IIT KGP"
+influx_bucket = "sensor_data"  # Ensure this bucket exists in your InfluxDB
 
-def connect_mongo():
-    """Function to establish a MongoDB connection with retry logic."""
+# Function to connect to InfluxDB with retry logic
+def connect_influx():
     while True:
         try:
-            client = MongoClient(mongo_uri, serverSelectionTimeoutMS=5000)
-            client.admin.command('ping')
-            print("Connected to MongoDB")
+            client = InfluxDBClient(
+                url=influx_url,
+                token=influx_token,
+                org=influx_org,
+                timeout=5000
+            )
+            client.ping()
+            print("✅ Connected to InfluxDB")
             return client
         except Exception as e:
-            print(f"MongoDB connection failed: {e}. Retrying in 5 seconds...")
+            print(f"❌ InfluxDB connection failed: {e}. Retrying in 5 seconds...")
             time.sleep(5)
 
-# Initialize MongoDB client with retry logic
-mongo_client = connect_mongo()
-db = mongo_client['sensor_data']  # Database name
-collection = db['readings']  # Collection name
+# Initialize InfluxDB client
+influx_client = connect_influx()
+write_api = influx_client.write_api(write_options=SYNCHRONOUS)
 
-# MQTT broker details
-broker_ip = '3.109.19.112'  # Replace with your MQTT broker IP
-port = 1883  # Default MQTT port
-subscribe_topic = 'sensor/reading'  # Topic to subscribe to
-publish_topic = 'device/time_update'  # Topic to publish the time
+# MQTT broker configuration
+broker_ip = '3.109.19.112'
+port = 1883
+subscribe_topic = 'sensor/reading'
 
-# Callback when the client connects to the broker
+# MQTT on_connect callback
 def on_connect(client, userdata, flags, rc):
     if rc == 0:
-        print('Connected to MQTT broker!')
+        print('✅ Connected to MQTT broker!')
         client.subscribe(subscribe_topic)
-        print(f'Subscribed to topic "{subscribe_topic}"')
+        print(f'📡 Subscribed to topic "{subscribe_topic}"')
     else:
-        print(f"Failed to connect to MQTT broker, return code {rc}")
+        print(f"❌ Failed to connect to MQTT broker, return code {rc}")
 
-# Callback when a message is received on a subscribed topic
+# MQTT on_message callback
 def on_message(client, userdata, message):
-    global mongo_client, collection
-    print(f'Received message on topic "{message.topic}": "{message.payload.decode()}"')
+    global write_api
+    print(f'📥 Received message on "{message.topic}": "{message.payload.decode()}"')
     payload = message.payload.decode()
-    
+
     readings = payload.split()
-    
+
     if len(readings) == 3:
         battery_voltage, pressure = map(float, readings[:2])
-        solar = 0.0
-        node_id = readings[2][1:]
-        print(f"Battery Voltage: {battery_voltage}, Pressure: {pressure}, Solar: {solar}, Node ID: {node_id}")
+        solar = 0.0  # Placeholder; you can extract this too if needed
+        node_id = readings[2][1:]  # remove prefix like "N12" → "12"
+        print(f"🔋 Voltage: {battery_voltage}, 💧 Pressure: {pressure}, ☀ Solar: {solar}, 🆔 Node: {node_id}")
     else:
-        print("Invalid payload format!")
+        print("❗ Invalid payload format!")
         return
 
-    timestamp = datetime.now()
-    document = {
-        "node_id": node_id,
-        "battery_voltage": battery_voltage,
-        "solar": solar,
-        "pressure": pressure,
-        "timestamp": timestamp
-    }
-    
     try:
-        collection.insert_one(document)
-        print(f'Inserted document: {document}')
+        point = (
+            Point("sensor_reading")
+            .tag("node_id", node_id)
+            .field("battery_voltage", battery_voltage)
+            .field("pressure", pressure)
+            .field("solar", solar)
+            .time(datetime.utcnow())
+        )
+        write_api.write(bucket=influx_bucket, org=influx_org, record=point)
+        print("✅ Data written to InfluxDB")
     except Exception as e:
-        print(f"MongoDB insertion error: {e}. Reconnecting...")
-        mongo_client = connect_mongo()
-        db = mongo_client['sensor_data']
-        collection = db['readings']
-        collection.insert_one(document)
-        print("Reconnected and inserted document.")
+        print(f"❌ InfluxDB write error: {e}. Reconnecting...")
+        influx_client = connect_influx()
+        write_api = influx_client.write_api(write_options=SYNCHRONOUS)
 
-# Callback when the client encounters an error
+# MQTT log callback
 def on_log(client, userdata, level, buf):
-    print(f'MQTT Client Log: {buf}')
+    print(f'🔍 MQTT Log: {buf}')
 
-# Create an MQTT client instance
+# Initialize and start MQTT client
 mqtt_client = mqtt.Client()
-
-# Set the callbacks
 mqtt_client.on_connect = on_connect
 mqtt_client.on_message = on_message
 mqtt_client.on_log = on_log
 
-# Connect to the MQTT broker
 mqtt_client.connect(broker_ip, port, 60)
-
-# Start the network loop in a separate thread
 mqtt_client.loop_start()
 
+# Keep running
 try:
     while True:
         time.sleep(500000)
 except KeyboardInterrupt:
-    print('Disconnected from MQTT broker')
+    print('👋 Disconnected from MQTT broker')
     mqtt_client.loop_stop()
     mqtt_client.disconnect()
